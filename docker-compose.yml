@@ -1,0 +1,61 @@
+services:
+  pg_publisher:
+    build:
+      context: .
+      dockerfile: Dockerfile.publisher
+    container_name: pg_publisher
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      REPLICATION_PASSWORD: replicator_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_publisher_data:/var/lib/postgresql/data
+      - ./publisher-init.sh:/docker-entrypoint-initdb.d/init.sh
+      - ./sql:/docker-entrypoint-initdb.d/sql
+    command: >
+      postgres
+        -c wal_level=logical
+        -c max_replication_slots=4
+        -c max_wal_senders=4
+        -c shared_preload_libraries=pg_cron
+        -c cron.database_name=testdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d testdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pg_subscriber:
+    image: postgres:16
+    container_name: pg_subscriber
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      REPLICATION_PASSWORD: replicator_pass
+    ports:
+      - "5434:5432"
+    volumes:
+      - pg_subscriber_data:/var/lib/postgresql/data
+      - ./sql/01_schema.sql:/docker-entrypoint-initdb.d/00_schema.sql
+      - ./subscriber-init.sh:/docker-entrypoint-initdb.d/01_subscribe.sh
+      - ./sql:/sql:ro
+    command: >
+      postgres
+        -c max_logical_replication_workers=4
+        -c max_worker_processes=8
+    depends_on:
+      pg_publisher:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d testdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pg_publisher_data:
+  pg_subscriber_data:
